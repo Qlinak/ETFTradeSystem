@@ -1,0 +1,1 @@
+"""Core domain constants and shared definitions."""

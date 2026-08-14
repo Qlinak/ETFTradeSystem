@@ -1,0 +1,63 @@
+services:
+  postgres:
+    image: postgres:16-alpine
+    container_name: etf-postgres
+    restart: unless-stopped
+    environment:
+      POSTGRES_USER: etf_user
+      POSTGRES_PASSWORD: etf_password
+      POSTGRES_DB: etf_system
+    ports:
+      - "5433:5432"
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U etf_user -d etf_system"]
+      interval: 5s
+      timeout: 3s
+      retries: 20
+    volumes:
+      - pgdata:/var/lib/postgresql/data
+      - ./docker/init/00-extensions.sql:/docker-entrypoint-initdb.d/00-extensions.sql:ro
+      - ./schema.sql:/docker-entrypoint-initdb.d/01-schema.sql:ro
+
+  seed:
+    build:
+      context: .
+      dockerfile: docker/seed/Dockerfile
+    container_name: etf-seed
+    depends_on:
+      postgres:
+        condition: service_healthy
+    environment:
+      DB_HOST: postgres
+      DB_PORT: "5432"
+      DB_NAME: etf_system
+      DB_USER: etf_user
+      DB_PASSWORD: etf_password
+    restart: "no"
+
+  api:
+    build:
+      context: .
+      dockerfile: docker/api/Dockerfile
+    container_name: etf-api
+    depends_on:
+      postgres:
+        condition: service_healthy
+    environment:
+      DB_HOST: postgres
+      DB_PORT: "5432"
+      DB_NAME: etf_system
+      DB_USER: etf_user
+      DB_PASSWORD: etf_password
+    ports:
+      - "8000:8000"
+    healthcheck:
+      test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://127.0.0.1:8000/health', timeout=2).read()"]
+      interval: 10s
+      timeout: 3s
+      retries: 10
+      start_period: 10s
+    restart: unless-stopped
+
+volumes:
+  pgdata:

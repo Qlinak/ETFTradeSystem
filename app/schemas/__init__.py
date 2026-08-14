@@ -1,0 +1,1 @@
+"""Pydantic API schemas for the ETF Trade System."""
