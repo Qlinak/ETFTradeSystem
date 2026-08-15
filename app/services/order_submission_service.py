@@ -12,7 +12,7 @@ from app.core.errors import ERROR_MESSAGES, ErrorCode
 from app.core.exceptions import NotFoundError, StateConflictError, ValidationError
 from app.repositories.idempotency_repository import finalize_idempotency
 from app.repositories.order_repository import insert_order, update_order_status
-from app.repositories.product_repository import get_pd, get_product_for_update
+from app.repositories.product_repository import derive_settlement_date_from_db_time, get_pd, get_product_for_update
 from app.schemas.orders import SubmitOrderRequest
 from app.services.cutoff_service import is_before_cutoff
 from app.services.idempotency_service import lock_idempotency_record
@@ -101,6 +101,7 @@ def submit_order(session: Session, payload: SubmitOrderRequest) -> dict[str, Any
 
     price = parsed_price
     cash_amount = normalize_cash_amount((Decimal(units) / Decimal(product["creation_unit_size"])) * price)
+    expected_settlement_date = derive_settlement_date_from_db_time(session, payload.productId)
 
     pending = insert_order(
         session,
@@ -113,6 +114,7 @@ def submit_order(session: Session, payload: SubmitOrderRequest) -> dict[str, Any
         cash_amount=str(cash_amount),
         currency=payload.currency,
         status="PENDING",
+        settlement_date=expected_settlement_date,
     )
 
     try:

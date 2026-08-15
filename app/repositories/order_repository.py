@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+from datetime import date
 from typing import Any
 
 from sqlalchemy import text
@@ -20,6 +21,7 @@ def insert_order(
     cash_amount: str,
     currency: str,
     status: str,
+    settlement_date: date | None = None,
     rejection_reason_code: str | None = None,
     rejection_reason: str | None = None,
 ) -> dict[str, Any]:
@@ -36,6 +38,7 @@ def insert_order(
                 cash_amount,
                 currency,
                 status,
+                settlement_date,
                 rejection_reason_code,
                 rejection_reason
             )
@@ -49,6 +52,7 @@ def insert_order(
                 :cash_amount,
                 :currency,
                 :status,
+                :settlement_date,
                 :rejection_reason_code,
                 :rejection_reason
             )
@@ -65,6 +69,7 @@ def insert_order(
             "cash_amount": cash_amount,
             "currency": currency,
             "status": status,
+            "settlement_date": settlement_date,
             "rejection_reason_code": rejection_reason_code,
             "rejection_reason": rejection_reason,
         },

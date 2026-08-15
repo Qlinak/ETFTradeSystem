@@ -1,0 +1,17 @@
+{
+  "url": "http://localhost:8000/api/v1/cash-ladder?asOf=2025-11-03&horizon=30",
+  "warmup": 2,
+  "runs": 12,
+  "wall_ms": {
+    "p50": 4152.12,
+    "p95": 8180.37,
+    "p99": 8283.9,
+    "avg": 5701.21
+  },
+  "api_responseTimeMs": {
+    "p50": 3983.5,
+    "p95": 4173.05,
+    "p99": 4194.61,
+    "avg": 3999.83
+  }
+}

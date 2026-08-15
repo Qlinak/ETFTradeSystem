@@ -1,17 +1,21 @@
 """HTTP endpoints for the ETF Trade System."""
 
+from datetime import date
 from datetime import datetime, timezone
+from time import perf_counter
 
-from fastapi import APIRouter, Body, Depends, HTTPException, Path, status
+from fastapi import APIRouter, Body, Depends, HTTPException, Path, Query, status
 from sqlalchemy.exc import SQLAlchemyError
 from sqlalchemy.orm import Session
 
 from app.core.errors import ErrorCode
 from app.core.exceptions import DomainError, NotFoundError, StateConflictError, ValidationError
 from app.db.session import get_db_session
+from app.schemas.cash_ladder import CashLadderResponse
 from app.schemas.common import ErrorResponse
 from app.schemas.orders import CancelOrderRequest, OrderResponse, SubmitOrderRequest
 from app.schemas.products import ProductQuotaResponse
+from app.services.cash_ladder_service import get_cash_ladder_response as get_cash_ladder_response_service
 from app.services.order_cancellation_service import cancel_order as cancel_order_service
 from app.services.order_query_service import get_order_response as get_order_response_service
 from app.services.order_submission_service import submit_order as submit_order_service
@@ -203,5 +207,25 @@ async def get_product_quota(
     try:
         response = get_quota_response_service(session, product_id=product_id)
         return ProductQuotaResponse.model_validate(response)
+    except DomainError as exc:
+        _raise_domain_http_error(exc)
+
+
+@router.get(
+    "/cash-ladder",
+    summary="Get expected cash ladder",
+    response_model=CashLadderResponse,
+    response_description="Expected inflow, outflow, and net amounts by settlement date, product, and currency",
+)
+async def get_cash_ladder(
+    as_of: date = Query(..., alias="asOf", description="Ladder start date (YYYY-MM-DD)."),
+    horizon: int = Query(30, ge=1, le=90, description="Number of dates in the ladder window."),
+    session: Session = Depends(get_db_session),
+) -> CashLadderResponse:
+    started = perf_counter()
+    try:
+        response = get_cash_ladder_response_service(session, as_of=as_of, horizon=horizon)
+        response["responseTimeMs"] = int((perf_counter() - started) * 1000)
+        return CashLadderResponse.model_validate(response)
     except DomainError as exc:
         _raise_domain_http_error(exc)

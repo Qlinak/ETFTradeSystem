@@ -135,6 +135,87 @@ Return current product quota state.
 2. Read-only endpoint
 3. `asOf` should come from DB-backed time context
 
+## 5. GET `/api/v1/cash-ladder?asOf=YYYY-MM-DD&horizon=30`
+
+### Purpose
+Return expected cash inflow, outflow, and net values for unsettled confirmed orders across:
+- the next N settlement dates
+- all currencies
+- all products
+
+### Query Parameters
+1. `asOf` (required)
+   - Type: `date` (`YYYY-MM-DD`)
+   - Meaning: valuation date used as the ladder start boundary.
+   - Rule: include orders with `status = CONFIRMED`, `settlement_date IS NOT NULL`, and `settlement_date >= asOf`.
+
+2. `horizon` (optional)
+   - Type: integer
+   - Default: `30`
+   - Allowed range: `1..90`
+   - Meaning: number of settlement dates (calendar days) to include, starting at `asOf`.
+
+### Example Request
+```http
+GET /api/v1/cash-ladder?asOf=2026-08-14&horizon=30
+```
+
+### Response Shape
+```json
+{
+  "asOf": "2026-08-14",
+  "horizon": 30,
+  "windowEnd": "2026-09-12",
+  "generatedAt": "2026-08-14T11:02:05.442Z",
+  "responseTimeMs": 12,
+  "rows": [
+    {
+      "settlementDate": "2026-08-18",
+      "productId": "ETF001",
+      "currency": "HKD",
+      "inflow": "12500000.0000",
+      "outflow": "1500000.0000",
+      "net": "11000000.0000"
+    },
+    {
+      "settlementDate": "2026-08-18",
+      "productId": "ETF006",
+      "currency": "USD",
+      "inflow": "500000.0000",
+      "outflow": "800000.0000",
+      "net": "-300000.0000"
+    }
+  ],
+  "totalsByDateCurrency": [
+    {
+      "settlementDate": "2026-08-18",
+      "currency": "HKD",
+      "inflow": "13000000.0000",
+      "outflow": "1500000.0000",
+      "net": "11500000.0000"
+    }
+  ]
+}
+```
+
+### Settlement Date Rules
+1. Settlement date must be derived from trade date using market holiday calendars.
+2. Business-day shifts must skip weekends and skip `holiday_calendars` rows for the product market.
+3. Ladder output must reflect those derived `settlement_date` values, not naive `trade_date + 2`.
+
+### Calculation Rules
+1. Source orders: `status = CONFIRMED` and not yet settled.
+2. Exclude `CANCELLED`, `REJECTED`, and already `SETTLED` orders.
+3. Treat creation/redeem direction consistently:
+   - CREATION contributes to outflow/inflow based on agreed accounting side.
+   - REDEMPTION contributes to the opposite side.
+4. `net = inflow - outflow`.
+5. Use fixed precision numeric strings (4 d.p.) in API response.
+
+### Error Cases
+1. `400 ERR_INVALID_AS_OF` when `asOf` is missing or invalid format.
+2. `400 ERR_INVALID_HORIZON` when `horizon` is outside allowed range.
+
 ## Shared Error Codes
 
 Suggested initial error catalog:
@@ -145,16 +226,19 @@ Suggested initial error catalog:
 - `ERR_ORDER_NOT_FOUND`
 - `ERR_INVALID_ORDER_STATE`
 - `ERR_IDEMPOTENCY_CONFLICT`
+- `ERR_INVALID_AS_OF`
+- `ERR_INVALID_HORIZON`
 
 ## Recommended Endpoint Implementation Sequence
 
-1. Declare all four endpoints in Swagger with placeholder service calls
+1. Declare all five endpoints in Swagger with placeholder service calls
 2. Implement Pydantic schemas and examples
 3. Wire submit-order service
 4. Wire query-order service
 5. Wire cancel-order service
 6. Wire quota-read service
-7. Add endpoint integration tests
+7. Wire cash-ladder read service
+8. Add endpoint integration tests
 
 ## Acceptance Checklist
 
@@ -163,3 +247,4 @@ Suggested initial error catalog:
 3. Endpoint file contains only route concerns
 4. Services hide transactional complexity from HTTP layer
 5. Responses match the agreed contract in `PDClientDesign.md`
+6. Cash ladder output is grouped by settlement date, currency, and product with correct holiday-aware dates

@@ -9,7 +9,8 @@ import os
 import random
 import time
 from datetime import date, datetime, timedelta
-from typing import Dict, List, Tuple
+from decimal import Decimal, ROUND_HALF_UP
+from typing import Dict, List, Set, Tuple
 
 import psycopg2
 from psycopg2.extras import execute_values
@@ -28,6 +29,8 @@ CUTOFF_TIMES = ["10:30:00", "11:00:00", "11:30:00", "12:00:00"]
 BASE_DATE = datetime(2025, 1, 1, 9, 0, 0)
 SECONDS_SPAN = 365 * 24 * 60 * 60
 HOLIDAY_BASE_DATE = date(2025, 1, 1)
+PRICE_SCALE = Decimal("0.00000001")
+CASH_SCALE = Decimal("0.0001")
 
 
 def env(name: str, default: str) -> str:
@@ -44,19 +47,19 @@ def get_connection():
     )
 
 
-def business_days_after(start: date, days: int) -> date:
+def business_days_after(start: date, days: int, holidays: Set[date]) -> date:
     current = start
     left = days
     while left > 0:
         current += timedelta(days=1)
-        if current.weekday() < 5:
+        if current.weekday() < 5 and current not in holidays:
             left -= 1
     return current
 
 
-def build_reference_data(rng: random.Random) -> Tuple[List[Tuple], List[Tuple], Dict[str, Dict[str, int]], Dict[str, List[str]]]:
+def build_reference_data(rng: random.Random) -> Tuple[List[Tuple], List[Tuple], Dict[str, Dict[str, str | int]], Dict[str, List[str]]]:
     products = []
-    product_meta: Dict[str, Dict[str, int]] = {}
+    product_meta: Dict[str, Dict[str, str | int]] = {}
     product_ids_by_currency: Dict[str, List[str]] = {c: [] for c in CURRENCIES}
 
     for i in range(1, PRODUCT_COUNT + 1):
@@ -65,22 +68,30 @@ def build_reference_data(rng: random.Random) -> Tuple[List[Tuple], List[Tuple], 
         creation_unit_size = rng.choice([100_000, 200_000, 500_000, 1_000_000])
         cutoff_time = CUTOFF_TIMES[(i - 1) % len(CUTOFF_TIMES)]
         has_qdii_quota = currency in {"RMB", "CNH"}
-        remaining_quota = round(rng.uniform(0, 5_000_000), 4)
+        daily_total_quota = round(rng.uniform(1_000_000, 5_000_000), 4)
+        remaining_quota = daily_total_quota
+        market = "US"
+        market_timezone = "UTC"
 
         products.append(
             (
                 product_id,
                 f"ETF Product {i:03d}",
+                market,
+                market_timezone,
                 currency,
                 creation_unit_size,
                 cutoff_time,
                 has_qdii_quota,
+                daily_total_quota,
                 remaining_quota,
             )
         )
         product_meta[product_id] = {
             "creation_unit_size": creation_unit_size,
             "currency": currency,
+            "cutoff_time": cutoff_time,
+            "market": market,
         }
         product_ids_by_currency[currency].append(product_id)
 
@@ -122,7 +133,18 @@ def reset_and_seed_reference_tables(
             cur,
             """
             INSERT INTO products
-                (id, name, currency, creation_unit_size, cutoff_time, has_qdii_quota, remaining_quota)
+                (
+                    id,
+                    name,
+                    market,
+                    market_timezone,
+                    currency,
+                    creation_unit_size,
+                    cutoff_time,
+                    has_qdii_quota,
+                    daily_total_quota,
+                    remaining_quota
+                )
             VALUES %s
             """,
             products,
@@ -149,8 +171,9 @@ def generate_order_row(
     rng: random.Random,
     pd_ids: List[str],
     product_ids: List[str],
-    product_meta: Dict[str, Dict[str, int]],
+    product_meta: Dict[str, Dict[str, str | int]],
     product_ids_by_currency: Dict[str, List[str]],
+    holidays_by_market: Dict[str, Set[date]],
 ) -> List[str]:
     if i < len(STATUSES):
         status = STATUSES[i]
@@ -171,15 +194,23 @@ def generate_order_row(
     unit_multiple = rng.randint(1, 15)
     units = creation_unit_size * unit_multiple
 
-    nav = rng.uniform(5.0, 250.0)
-    cash_amount = units / creation_unit_size * nav
+    estimated_price = Decimal(str(rng.uniform(5.0, 250.0))).quantize(PRICE_SCALE, rounding=ROUND_HALF_UP)
+    cash_amount = (Decimal(units) * estimated_price).quantize(CASH_SCALE, rounding=ROUND_HALF_UP)
 
-    submitted_dt = BASE_DATE + timedelta(seconds=rng.randrange(SECONDS_SPAN))
-
-    if status == "SETTLED":
-        settlement_date = business_days_after(submitted_dt.date(), 2).isoformat()
+    random_day = BASE_DATE.date() + timedelta(days=rng.randrange(365))
+    if status in {"PENDING", "CONFIRMED"}:
+        cutoff_h, cutoff_m, cutoff_s = [int(x) for x in str(product_meta[product_id]["cutoff_time"]).split(":")]
+        cutoff_seconds = cutoff_h * 3600 + cutoff_m * 60 + cutoff_s
+        safe_end = max(1, cutoff_seconds)
+        second_of_day = rng.randrange(safe_end)
     else:
-        settlement_date = ""
+        second_of_day = rng.randrange(24 * 60 * 60)
+
+    submitted_dt = datetime.combine(random_day, datetime.min.time()) + timedelta(seconds=second_of_day)
+
+    market = str(product_meta[product_id]["market"])
+    market_holidays = holidays_by_market.get(market, set())
+    settlement_date = business_days_after(submitted_dt.date(), 2, market_holidays).isoformat()
 
     return [
         f"COID-{i + 1:07d}",
@@ -187,9 +218,11 @@ def generate_order_row(
         pd_id,
         order_type,
         str(units),
+        f"{estimated_price:.8f}",
         f"{cash_amount:.4f}",
         currency,
         status,
+        submitted_dt.isoformat(),
         submitted_dt.isoformat(),
         settlement_date,
     ]
@@ -198,8 +231,9 @@ def generate_order_row(
 def copy_orders(
     conn,
     rng: random.Random,
-    product_meta: Dict[str, Dict[str, int]],
+    product_meta: Dict[str, Dict[str, str | int]],
     product_ids_by_currency: Dict[str, List[str]],
+    holidays_by_market: Dict[str, Set[date]],
 ) -> None:
     product_ids = list(product_meta.keys())
     pd_ids = [f"PD{i:02d}" for i in range(1, PD_COUNT + 1)]
@@ -220,6 +254,7 @@ def copy_orders(
                         product_ids,
                         product_meta,
                         product_ids_by_currency,
+                        holidays_by_market,
                     )
                 )
 
@@ -227,7 +262,7 @@ def copy_orders(
             cur.copy_expert(
                 """
                 COPY orders
-                    (client_order_id, product_id, pd_id, order_type, units, cash_amount, currency, status, submitted_at, settlement_date)
+                    (client_order_id, product_id, pd_id, order_type, units, estimated_price, cash_amount, currency, status, submitted_at, server_received_at, settlement_date)
                 FROM STDIN WITH (FORMAT CSV)
                 """,
                 buffer,
@@ -246,6 +281,9 @@ def main() -> None:
     print("Building deterministic reference data...")
     products, pds, product_meta, product_ids_by_currency = build_reference_data(rng)
     holiday_rows = build_holiday_calendars(rng)
+    holidays_by_market: Dict[str, Set[date]] = {}
+    for market, holiday_date in holiday_rows:
+        holidays_by_market.setdefault(market, set()).add(holiday_date)
 
     print("Connecting to PostgreSQL...")
     with get_connection() as conn:
@@ -255,7 +293,7 @@ def main() -> None:
         reset_and_seed_reference_tables(conn, products, pds, holiday_rows)
 
         print("Bulk loading 1,000,000 orders via COPY...")
-        copy_orders(conn, rng, product_meta, product_ids_by_currency)
+        copy_orders(conn, rng, product_meta, product_ids_by_currency, holidays_by_market)
 
         conn.commit()
 

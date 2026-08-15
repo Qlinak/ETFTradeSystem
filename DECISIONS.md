@@ -113,3 +113,62 @@ File: tests/concurrency/test_quota_concurrency.py
 1. If client sends IDs that do not exist in seed data, API returns a clean 404 business error (not 500).
 2. Valid test payloads must use real seeded IDs and valid unit multiples for the selected product.
 3. We do not use compensating transactions for mid-flight submit failures; correctness comes from single-transaction atomicity plus idempotent retry.
+
+## 8) Cash Ladder Benchmark Decision
+
+### Method used
+
+1. Benchmark target endpoint:
+`GET /api/v1/cash-ladder?asOf=2025-11-03&horizon=30`
+
+2. Dataset size:
+1,000,000 seeded orders.
+
+3. Measurement:
+- Client wall-clock latency (`wall_ms`)
+- API-reported server latency (`responseTimeMs`)
+
+4. Sampling setup:
+2 warmup calls + 12 measured calls for each stage.
+
+5. Script used:
+`scripts/benchmark_cash_ladder.py`
+
+### Results before/after optimization
+
+1. Before optimization (`benchmark_before.json`):
+- API p99: `4194.61ms`
+- Wall p99: `8283.90ms`
+
+2. After final optimization (`benchmark_after_index.json`):
+- API p99: `31.89ms`
+- Wall p99: `75.91ms`
+
+3. Outcome:
+Target met (`p99 < 200ms`).
+
+## 9) USD 300M Redemption Refresh Scenario
+
+Scenario:
+Operations confirms a USD 300 million redemption and refreshes cash ladder immediately.
+
+Decision:
+1. If the confirm transaction is committed, refresh should show the new number.
+2. If refresh happens before commit finishes, it can briefly show the old number.
+3. A refresh after commit will show the new number.
+
+Reason:
+Cash ladder reads from live PostgreSQL state per request (no cache layer in front).
+
+## 10) Eventual Consistency Decision for This Business Case
+
+Question:
+Is "eventually consistent, correct in a few seconds" acceptable?
+
+Decision:
+No, not for this cash-ladder use case.
+
+Reason:
+1. This view is used by operations for immediate liquidity decisions.
+2. A few seconds of stale exposure can cause wrong cash actions near large confirmations/cancellations.
+3. We require fresh committed reads, not delayed projection reads, for this endpoint.

@@ -41,6 +41,10 @@ CREATE TABLE orders (
 
 CREATE INDEX orders_product_status_idx ON orders (product_id, status);
 CREATE INDEX orders_client_order_lookup_idx ON orders (client_order_id);
+CREATE INDEX orders_confirmed_settlement_idx
+    ON orders (settlement_date, product_id, currency)
+    INCLUDE (order_type, cash_amount)
+    WHERE status = 'CONFIRMED';
 
 CREATE TABLE order_idempotency (
     pd_id VARCHAR(64) NOT NULL REFERENCES pds(id),
