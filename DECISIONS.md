@@ -102,11 +102,31 @@ File: tests/integration/test_order_endpoints.py
 4. Adversarial unit values are rejected.
 5. Ledger movements remain balanced.
 
+### Cash ladder API tests
+File: tests/integration/test_cash_ladder_endpoint.py
+
+1. Cash ladder returns `responseTimeMs` in payload.
+2. Settlement-date derivation respects holiday calendar and weekend skipping.
+3. Inflow, outflow, and net values are correct for derived settlement date rows.
+4. Invalid horizon is rejected.
+
 ### Concurrency test
 File: tests/concurrency/test_quota_concurrency.py
 
 1. Eight concurrent QDII submissions never over-issue quota.
 2. Expected split is confirmed vs rejected based on remaining daily quota.
+
+### Performance benchmark checks
+Files:
+- scripts/benchmark_cash_ladder.py
+- benchmark_before.json
+- benchmark_after_query_only.json
+- benchmark_after_reseed_precompute.json
+- benchmark_after_index.json
+
+1. Baseline latency is captured before optimization.
+2. Each optimization stage is measured with the same endpoint and method.
+3. Final p99 is verified against target (<200ms).
 
 ## 7) Current Known Behavior
 
