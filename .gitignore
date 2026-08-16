@@ -43,5 +43,10 @@ Thumbs.db
 # VS Code
 .vscode/
 
+# Frontend dependencies and build caches
+node_modules/
+frontend/operations-console/node_modules/
+frontend/operations-console/dist/
+
 # Local runtime leftovers
 memories/
