@@ -39,6 +39,22 @@ CREATE TABLE orders (
     CONSTRAINT orders_pd_client_order_id_key UNIQUE (pd_id, client_order_id)
 );
 
+CREATE TABLE order_status_events (
+    event_id BIGSERIAL PRIMARY KEY,
+    order_id UUID NOT NULL REFERENCES orders(id) ON DELETE CASCADE,
+    client_order_id VARCHAR(128) NOT NULL,
+    product_id VARCHAR(64) NOT NULL,
+    pd_id VARCHAR(64) NOT NULL,
+    status VARCHAR(32) NOT NULL CHECK (status IN ('PENDING', 'CONFIRMED', 'REJECTED', 'CANCELLED', 'SETTLED')),
+    rejection_reason TEXT,
+    event_type VARCHAR(16) NOT NULL CHECK (event_type IN ('CREATED', 'STATUS_CHANGED')),
+    occurred_at TIMESTAMPTZ NOT NULL DEFAULT statement_timestamp()
+);
+
+CREATE INDEX order_status_events_event_id_idx ON order_status_events (event_id);
+CREATE INDEX order_status_events_order_id_idx ON order_status_events (order_id, event_id DESC);
+CREATE INDEX order_status_events_occurred_at_idx ON order_status_events (occurred_at DESC);
+
 CREATE INDEX orders_product_status_idx ON orders (product_id, status);
 CREATE INDEX orders_client_order_lookup_idx ON orders (client_order_id);
 CREATE INDEX orders_confirmed_settlement_idx
@@ -236,3 +252,62 @@ AFTER INSERT OR UPDATE OR DELETE ON ledger_entries
 DEFERRABLE INITIALLY DEFERRED
 FOR EACH ROW
 EXECUTE FUNCTION assert_ledger_zero_sum();
+
+CREATE OR REPLACE FUNCTION emit_order_status_event()
+RETURNS TRIGGER
+LANGUAGE plpgsql
+AS $$
+BEGIN
+    IF TG_OP = 'INSERT' THEN
+        INSERT INTO order_status_events (
+            order_id,
+            client_order_id,
+            product_id,
+            pd_id,
+            status,
+            rejection_reason,
+            event_type
+        )
+        VALUES (
+            NEW.id,
+            NEW.client_order_id,
+            NEW.product_id,
+            NEW.pd_id,
+            NEW.status,
+            NEW.rejection_reason,
+            'CREATED'
+        );
+        RETURN NEW;
+    END IF;
+
+    IF NEW.status IS DISTINCT FROM OLD.status
+       OR NEW.rejection_reason IS DISTINCT FROM OLD.rejection_reason THEN
+        INSERT INTO order_status_events (
+            order_id,
+            client_order_id,
+            product_id,
+            pd_id,
+            status,
+            rejection_reason,
+            event_type
+        )
+        VALUES (
+            NEW.id,
+            NEW.client_order_id,
+            NEW.product_id,
+            NEW.pd_id,
+            NEW.status,
+            NEW.rejection_reason,
+            'STATUS_CHANGED'
+        );
+    END IF;
+
+    RETURN NEW;
+END;
+$$;
+
+DROP TRIGGER IF EXISTS orders_status_events_trg ON orders;
+CREATE TRIGGER orders_status_events_trg
+AFTER INSERT OR UPDATE OF status, rejection_reason ON orders
+FOR EACH ROW
+EXECUTE FUNCTION emit_order_status_event();

@@ -5,7 +5,7 @@ It also runs a Python seeding job on startup to load deterministic benchmark dat
 
 ## Ship Application in Docker
 
-Run the full stack (PostgreSQL + seed + FastAPI API):
+Run the full stack (PostgreSQL + seed + FastAPI API + Operations Frontend):
 
 ```bash
 docker compose up -d --build
@@ -16,6 +16,43 @@ API endpoints after startup:
 - Swagger UI: `http://localhost:8000/docs`
 - OpenAPI JSON: `http://localhost:8000/openapi.json`
 - Health: `http://localhost:8000/health`
+- Operations Frontend: `http://localhost:5173`
+
+## Run Operations Frontend
+
+An operations blotter frontend starts automatically with Docker Compose and is available at `http://localhost:5173`.
+
+### Option A: Start with Docker Compose (recommended)
+
+```bash
+docker compose up -d --build
+```
+
+### Option B: Run frontend locally in dev mode
+
+An operations blotter frontend source app is available under `frontend/operations-console`.
+
+1) Start backend services:
+
+```bash
+docker compose up -d --build
+```
+
+2) Start the frontend dev server:
+
+```bash
+cd frontend/operations-console
+npm install
+npm run dev
+```
+
+3) Open the frontend URL shown by Vite (usually `http://localhost:5173`).
+
+Optional API base URL override:
+
+```bash
+VITE_API_BASE_URL=http://localhost:8000/api/v1 npm run dev
+```
 
 Check API logs:
 

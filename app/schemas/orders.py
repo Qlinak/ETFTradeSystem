@@ -45,3 +45,9 @@ class CancelOrderRequest(BaseModel):
 
     pdId: str = Field(..., examples=["PD-GOLDMAN-HK"])
     reason: str = Field(..., examples=["Algorithmic execution adjustment"])
+
+
+class ConfirmOrderRequest(BaseModel):
+    """HTTP request schema for manual order confirmation."""
+
+    pdId: str = Field(..., examples=["PD-GOLDMAN-HK"])
